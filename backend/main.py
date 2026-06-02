@@ -1,62 +1,86 @@
 from fastapi import FastAPI, UploadFile, File
-from pdf_reader import extract_text_from_pdf
-from pdf_reader import extract_text_from_pdf
-from skill_extractor import extract_skills
-from skill_extractor import (
-    extract_skills,
-    get_missing_skills,
-    recommend_jobs
-)
-import shutil
+from fastapi.middleware.cors import CORSMiddleware
+
+import pdf_reader
+import skill_extractor
 
 app = FastAPI()
 
-@app.get("/")
-def home():
-    return {"message": "AI Resume Analyzer API Running"}
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-@app.post("/upload")
-async def upload_resume(file: UploadFile = File(...)):
+# ---------------- SKILLS ----------------
+SKILLS = [
+    "python", "java", "sql", "html", "css",
+    "javascript", "react", "node", "mongodb",
+    "git", "github", "machine learning", "deep learning"
+]
 
-    filepath = f"uploads/{file.filename}"
+# ---------------- ATS (SMART VERSION) ----------------
+def calculate_ats(found_skills, text):
+    if not found_skills:
+        return 10
 
-    with open(filepath, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    base = (len(found_skills) / len(SKILLS)) * 70
+    bonus = 0
+
+    text_lower = text.lower()
+
+    if "project" in text_lower:
+        bonus += 10
+    if "experience" in text_lower:
+        bonus += 10
+    if "intern" in text_lower:
+        bonus += 5
+    if len(text) > 1000:
+        bonus += 5
+
+    score = base + bonus
+    return min(int(score), 100)
+
+
+# ---------------- JOBS ----------------
+def recommend_jobs(found_skills):
+    jobs = []
+
+    if "python" in found_skills:
+        jobs.append("Python Developer")
+
+    if "react" in found_skills:
+        jobs.append("Frontend Developer")
+
+    if "sql" in found_skills:
+        jobs.append("Data Analyst")
+
+    if "git" in found_skills:
+        jobs.append("Software Developer")
+
+    return jobs or ["Software Engineer"]
+
+
+# ---------------- MISSING SKILLS ----------------
+def get_missing_skills(found_skills):
+    return [s for s in SKILLS if s not in found_skills]
+
+
+# ---------------- API ----------------
+@app.post("/analyze")
+async def analyze_resume(file: UploadFile = File(...)):
+
+    pdf_bytes = await file.read()
+
+    text = pdf_reader.extract_text(pdf_bytes)
+
+    found_skills = skill_extractor.extract_skills(text)
 
     return {
-        "filename": file.filename,
-        "saved_to": filepath,
-        "status": "uploaded successfully"
-    }
-@app.get("/read-pdf")
-def read_pdf():
-
-    pdf_path = "uploads/8_Biology_SEM-1_Textbook.pdf"
-
-    text = extract_text_from_pdf(pdf_path)
-
-    return {
-        "text": text[:1000]
-    }
-@app.get("/analyze-resume")
-def analyze_resume():
-
-    pdf_path = "uploads/8_Biology_SEM-1_Textbook.pdf"
-
-    text = extract_text_from_pdf(pdf_path)
-
-    skills = extract_skills(text)
-
-    missing_skills = get_missing_skills(skills)
-
-    recommended_jobs = recommend_jobs(skills)
-
-    ats_score = min(len(skills) * 20, 100)
-
-    return {
-        "skills_found": skills,
-        "missing_skills": missing_skills,
-        "recommended_jobs": recommended_jobs,
-        "total_skills": len(skills),
-        "ats_score": ats_score
+        "ats_score": calculate_ats(found_skills, text),
+        "skills_found": found_skills,
+        "missing_skills": get_missing_skills(found_skills),
+        "recommended_jobs": recommend_jobs(found_skills)
     }
